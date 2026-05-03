@@ -35,6 +35,7 @@ cef-tracker/
     │   ├── __init__.py
     │   ├── __main__.py
     │   ├── models.py
+    │   ├── http.py
     │   ├── sources/{base.py, cefconnect.py}
     │   ├── output/{base.py, excel.py, csv.py}
     │   ├── diff.py
@@ -150,7 +151,7 @@ These behaviors are exactly what `tests/test_diff.py` should pin down.
 - `pathlib.Path`, not `os.path`.
 - f-strings for string interpolation.
 - `dataclass` (frozen where appropriate) for value types.
-- `requests` for HTTP. Set a User-Agent. Handle network errors gracefully (retry once, then fail loudly).
+- `requests` for HTTP. Set a User-Agent. Use exponential backoff for transient errors (network errors, HTTP 429, HTTP 5xx) — max 3 attempts, doubling delay each time (0.5s → 1.0s → 2.0s). Pass through other 4xx immediately. The script version implements this as an inline `get_with_backoff` helper; the package version pulls it out into `cef_tracker/http.py` so both `CEFConnectSource` and `EdgarSource` share it.
 - Keep dependencies minimal: `requests`, `pandas`, `openpyxl`, `beautifulsoup4` (HTML parse for the CEFConnect metadata fields), `pytest` (package only). Nothing else is justified at this scope.
 
 ## What not to do

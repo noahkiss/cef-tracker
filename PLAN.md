@@ -17,12 +17,13 @@ A single Python file, `script/cef_snapshot.py`, structured top-down:
 1. **Module docstring** — one short paragraph: what this script does, how to run it, where it writes.
 2. **Imports** — stdlib first (`pathlib`, `datetime`, `sys`), then third-party (`requests`, `pandas`).
 3. **Constants** — `FIELDS` (the human-readable column order for the output), `TICKERS_FILE`, `EXTRACTS_DIR`, URL templates for each CEFConnect endpoint listed in `AGENTS.md` (pricinghistory, performance/annualized, distributionhistory, search/tickers, and the per-fund HTML page), request `HEADERS` (browser-like User-Agent + `Referer`).
-4. **`fetch_one_fund(ticker: str, name_lookup: dict[str, str]) -> dict`** — hit each CEFConnect endpoint, parse what each returns, parse the per-fund HTML page with `beautifulsoup4` for the metadata fields (sponsor, leverage_pct, leverage_cost, unii, expense_ratio), and assemble one flat dict keyed by the internal field names from `AGENTS.md`. Return `None` for any field whose source returned nothing. Raise on HTTP error after one retry. The `name_lookup` is built once from `search/tickers` in `fetch_all_funds` and passed in.
-5. **`fetch_all_funds(tickers: list[str]) -> pandas.DataFrame`** — call `fetch_one_fund` for each ticker, log progress to stdout, collect into a DataFrame in the column order defined by `FIELDS`.
-6. **`write_outputs(df: pandas.DataFrame, extracts_dir: pathlib.Path) -> tuple[Path, Path]`** — create `extracts_dir` if it does not exist, generate a timestamp string `YYYYMMDDHHMM`, write `extract-{ts}.xlsx` (using `openpyxl` engine) and `extract-{ts}.csv`, return the two paths.
-7. **`read_tickers(path: pathlib.Path) -> list[str]`** — read `tickers.txt`, one ticker per line, strip whitespace, ignore blank lines and lines starting with `#`.
-8. **`main()`** — orchestration: read tickers, fetch all funds, write outputs, print where the files landed.
-9. **`if __name__ == "__main__": main()`** at the bottom.
+4. **`fetch_one_fund(ticker: str, name_lookup: dict[str, str]) -> dict`** — hit each CEFConnect endpoint, parse what each returns, parse the per-fund HTML page with `beautifulsoup4` for the metadata fields (sponsor, leverage_pct, leverage_cost, unii, expense_ratio), and assemble one flat dict keyed by the internal field names from `AGENTS.md`. Return `None` for any field whose source returned nothing. Use the `get_with_backoff` helper (below) for every HTTP call. The `name_lookup` is built once from `search/tickers` in `fetch_all_funds` and passed in.
+5. **`get_with_backoff(url: str, headers: dict, max_attempts: int = 3, base_delay: float = 0.5) -> requests.Response`** — small helper that retries transient errors (network errors, HTTP 429, HTTP 5xx) with exponential backoff: `base_delay * 2 ** attempt` seconds between attempts (so 0.5s → 1.0s → 2.0s with the default). Raises after `max_attempts`. Pass through 4xx other than 429 immediately (those won't fix themselves). Add a short `# Teaching:` block above this function explaining what exponential backoff is and why polite retry logic matters when scraping someone else's site.
+6. **`fetch_all_funds(tickers: list[str]) -> pandas.DataFrame`** — call `fetch_one_fund` for each ticker, log progress to stdout, collect into a DataFrame in the column order defined by `FIELDS`.
+7. **`write_outputs(df: pandas.DataFrame, extracts_dir: pathlib.Path) -> tuple[Path, Path]`** — create `extracts_dir` if it does not exist, generate a timestamp string `YYYYMMDDHHMM`, write `extract-{ts}.xlsx` (using `openpyxl` engine) and `extract-{ts}.csv`, return the two paths.
+8. **`read_tickers(path: pathlib.Path) -> list[str]`** — read `tickers.txt`, one ticker per line, strip whitespace, ignore blank lines and lines starting with `#`.
+9. **`main()`** — orchestration: read tickers, fetch all funds, write outputs, print where the files landed.
+10. **`if __name__ == "__main__": main()`** at the bottom.
 
 ### Style
 
@@ -30,7 +31,7 @@ A single Python file, `script/cef_snapshot.py`, structured top-down:
 - Docstrings on each function (one to three lines, focused on WHY/contract, not WHAT).
 - Sparse inline comments; only where the WHY is non-obvious.
 - f-strings; `pathlib.Path`; no `os.path`.
-- Handle CEFConnect HTTP errors with one retry, then raise.
+- All HTTP calls go through `get_with_backoff` (exponential backoff, max 3 attempts). No bare `requests.get` in `fetch_one_fund`.
 
 ### Files to create in `script/`
 
@@ -58,6 +59,11 @@ Now build the multi-module version. The functional behavior is identical to Phas
 - `@dataclass class FundSnapshot` — the result of fetching one fund. Fields exactly match the internal field names from `AGENTS.md`. Add `as_of: datetime` and `source: str` so a snapshot knows where it came from and when. Provide a `to_dict()` method that returns a dict with human-readable column names (for output writers).
 - A `# Teaching:` callout near `FundSnapshot` explaining what `@dataclass` gives you (init, repr, eq) for free.
 
+**`package/cef_tracker/http.py`**
+
+- `def get_with_backoff(session: requests.Session, url: str, *, headers: dict | None = None, max_attempts: int = 3, base_delay: float = 0.5) -> requests.Response` — shared HTTP helper used by every `DataSource`. Retries transient errors (network errors, HTTP 429, HTTP 5xx) with exponential backoff (`base_delay * 2 ** attempt`). Passes through 4xx other than 429 immediately. Raises `requests.HTTPError` after `max_attempts`.
+- A `# Teaching:` callout above it: exponential backoff is the standard polite-retry pattern for talking to services you don't own. Doubling the delay each attempt gives the upstream room to recover from transient load without you hammering it. The same helper is used by both `CEFConnectSource` and `EdgarSource` — pulling it out once is what an ABC-style architecture buys you.
+
 **`package/cef_tracker/sources/base.py`**
 
 - `class DataSource(abc.ABC)` with one abstract method: `def fetch(self, ticker: Ticker) -> FundSnapshot: ...`.
@@ -67,8 +73,7 @@ Now build the multi-module version. The functional behavior is identical to Phas
 
 - `class CEFConnectSource(DataSource)` — concrete implementation that combines the JSON endpoints and HTML scrape from `AGENTS.md` into a single `FundSnapshot`.
 - `__init__` accepts an optional `requests.Session` for testability. Builds (and caches per-instance) the ticker → name map from `/api/v3/search/tickers` on first `fetch`.
-- `fetch` makes the four JSON calls + one HTML fetch, runs each through a small private parser (`_parse_pricing`, `_parse_performance`, `_parse_distributions`, `_parse_html_metadata`), merges into one `FundSnapshot`, and returns it. Each parser returns `None` for fields it cannot find rather than raising.
-- One retry on transient HTTP error, then raises.
+- `fetch` makes the four JSON calls + one HTML fetch (all via `http.get_with_backoff`), runs each through a small private parser (`_parse_pricing`, `_parse_performance`, `_parse_distributions`, `_parse_html_metadata`), merges into one `FundSnapshot`, and returns it. Each parser returns `None` for fields it cannot find rather than raising.
 - Add a `# Teaching:` callout near the parser methods explaining why the source presents a single `fetch` interface even though it talks to five URLs internally — the rest of the app shouldn't care that CEFConnect's data lives in five places.
 
 **`package/cef_tracker/sources/edgar.py`** — *real implementation, not a stub.* This source exists primarily to demonstrate that adding a second source under the `DataSource` ABC is a self-contained operation, but the data it returns is also genuinely useful: 19a-1-style distribution notices appear on EDGAR a week or two before CEFConnect reflects them.
@@ -76,8 +81,7 @@ Now build the multi-module version. The functional behavior is identical to Phas
 - `class EdgarSource(DataSource)` — hits the EDGAR EFTS full-text search endpoint listed in `AGENTS.md`. Searches for 497 filings mentioning the ticker symbol within the last 60 days.
 - `__init__(user_agent: str, session: requests.Session | None = None, lookback_days: int = 60)`. The `user_agent` is mandatory (EDGAR requires it; configurable via `config.toml`).
 - `fetch` returns a `FundSnapshot` whose `recent_distribution_filings` field is a list of `(filing_date, accession_number, form_type)` tuples. All other fields are `None`.
-- Respect EDGAR's 10-requests-per-second rate limit. A simple `time.sleep(0.15)` between calls is sufficient at this scale.
-- One retry on transient HTTP error, then raises.
+- All HTTP calls go through `http.get_with_backoff`. EDGAR's 10-req/s limit is well under what we'll generate at this scale; the backoff helper covers the case where EDGAR returns 429 anyway (it does, occasionally, regardless of rate).
 
 **`package/cef_tracker/output/base.py`**
 

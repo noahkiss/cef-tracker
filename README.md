@@ -18,6 +18,7 @@ The same problem, solved twice. Read both. Decide which style fits the next tool
   - [Morningstar (paid) — a primer](#morningstar-paid--a-primer)
 - [Project layout](#project-layout)
 - [Tooling: pip, uv, and what to use when](#tooling-pip-uv-and-what-to-use-when)
+- [Tracking changes with git](#tracking-changes-with-git)
 - [Learning resources](#learning-resources)
 - [Why README.md? Why AGENTS.md?](#why-readmemd-why-agentsmd)
 - [How this project came together](#how-this-project-came-together)
@@ -228,6 +229,55 @@ Equivalent commands:
 | `python script.py` | `uv run script.py` |
 
 This project documents the pip-based path because it works for everyone. uv works identically for those who prefer it.
+
+---
+
+## Tracking changes with git
+
+If you have not used git before, the short version is this: git keeps a complete history of every saved version of your code. Every "commit" is a snapshot, with a message describing what changed. You can view the history, compare any two versions, undo a change from last week, or share the whole history with someone else by pushing it to a service like GitHub.
+
+For a tool like this one — where the field set may grow, the threshold values may get tuned, and the data sources may evolve — having that history matters more than it first looks. When a value comes out wrong six months from now, "what was this code doing in March?" is one command away.
+
+### The minimum you need to know
+
+```sh
+git status                 # what has changed since the last commit
+git diff                   # show the actual line-by-line changes
+git add <file>             # stage a file to be included in the next commit
+git commit -m "message"    # save a snapshot of staged changes
+git log                    # see the history of commits
+git log --oneline          # the same, one line per commit
+git show <commit>          # see exactly what changed in a specific commit
+```
+
+That is enough to use git productively as a single user. Branches, merges, rebases, and the rest can wait until you actually need them.
+
+### Seeing history on GitHub
+
+On the [project's GitHub page](https://github.com/noahkiss/cef-tracker), the **Commits** link (next to the branch dropdown) shows every snapshot. Click any commit to see the diff. Click any file and then the **History** button to see only the commits that touched that file. Click the **Blame** button on a file to see, line by line, which commit last modified each line and why. These three views — commit list, file history, blame — answer most "when did this change?" questions without leaving the browser.
+
+### Conventional Commits — a small habit worth building early
+
+The commit messages in this repo follow [Conventional Commits](https://www.conventionalcommits.org), a lightweight convention where each message starts with a short type prefix:
+
+- `feat:` — a new feature
+- `fix:` — a bug fix
+- `docs:` — documentation only
+- `chore:` — tooling, scaffolding, dependency bumps
+- `refactor:` — code change that is neither a feature nor a fix
+- `test:` — adding or fixing tests
+
+Examples from this repo: `chore: initial scaffolding`, `docs: pivot CEFConnect data path to JSON-fan + HTML scrape`. The prefix takes a second to type and makes `git log --oneline` instantly scannable: at a glance you can tell which commits added behavior, which fixed bugs, and which were just docs. Some teams also use it to auto-generate changelogs and version bumps, but the habit pays off even if you never automate anything.
+
+### A gentle reading list
+
+- [git - the simple guide](https://rogerdudler.github.io/git-guide/) (Roger Dudler) — one page, plain language, subtitled "no deep shit." Best place to start if git is brand new.
+- [GitHub's "Hello World" tutorial](https://docs.github.com/en/get-started/quickstart/hello-world) — walks through making your first commit and pull request entirely in the browser, no command line required.
+- [Atlassian's git tutorials](https://www.atlassian.com/git/tutorials) — once you want more depth, this is the friendliest reference site on the web. The "Beginner" track covers everything most people ever need.
+- [Pro Git book](https://git-scm.com/book/en/v2), chapters 1–3 (free online) — the canonical reference. Read it once you have used git for a few weeks and want to understand what is actually happening underneath.
+- [Oh Shit, Git!?!](https://ohshitgit.com) — recipes for getting out of common git accidents. Bookmark for later; you will want it eventually.
+
+(Note: *Automate the Boring Stuff* does not have a git chapter. Roger Dudler's one-pager above is the closest equivalent in tone and brevity.)
 
 ---
 
