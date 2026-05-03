@@ -1,0 +1,9 @@
+# One ticker per line. Lines starting with # and blank lines are ignored.
+# These five are a diverse sample across CEF categories (taxable bond, equity,
+# multi-sector, utility, REIT). Replace with your own list.
+
+BIT
+BST
+PDI
+UTG
+RFI

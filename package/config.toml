@@ -1,0 +1,69 @@
+# cef-tracker configuration
+#
+# Everything that changes often lives here, not in code. Edit this file to
+# change the universe of tickers, the field set, the output destinations, or
+# the diff thresholds. Code only changes when behavior changes.
+
+[fund_universe]
+# One ticker per entry. These five are a diverse sample across CEF categories
+# (taxable bond, equity, multi-sector, utility, REIT). Replace with your own.
+tickers = ["BIT", "BST", "PDI", "UTG", "RFI"]
+
+[fields]
+# Internal field names to extract. Output column names are mapped to
+# human-readable labels by the output writers. Unknown fields are skipped
+# with a warning rather than crashing the run.
+include = [
+  "ticker",
+  "name",
+  "sponsor",
+  "nav",
+  "market_price",
+  "discount_pct",
+  "leverage_pct",
+  "leverage_cost",
+  "distribution_rate",
+  "roc_pct",
+  "unii",
+  "expense_ratio",
+  "total_return_1y",
+  "total_return_3y",
+  "total_return_5y",
+  "total_return_10y",
+]
+
+[sources]
+# Which DataSource implementation to use. Adding a new source means writing
+# a new file under cef_tracker/sources/ that conforms to the DataSource ABC,
+# then naming it here.
+primary = "cefconnect"
+
+[output]
+# Each format listed here gets written for every run. Adding a new format
+# means writing a new file under cef_tracker/output/ that conforms to the
+# OutputWriter ABC, then naming it here.
+formats = ["excel", "csv"]
+
+# Root directory for extracts. Each run lands in a timestamped subdirectory:
+#   extracts/YYYYMMDDHHMM/extract-YYYYMMDDHHMM.xlsx
+#   extracts/YYYYMMDDHHMM/extract-YYYYMMDDHHMM.csv
+#   extracts/YYYYMMDDHHMM/run.log
+extracts_dir = "extracts"
+
+[diff]
+# Thresholds for flagged month-over-month changes. The diff module compares
+# the current run against the most recent prior run (found by directory
+# date sort) and emits a flag for each change matching these rules.
+
+# Leverage cost moved by more than this many basis points (either direction).
+leverage_cost_change_bps = 50
+
+# UNII flipped from non-negative to negative.
+flag_unii_negative = true
+
+# Distribution rate dropped vs. prior run (any decrease).
+flag_distribution_cut = true
+
+# Discount Z-score (vs. trailing 1y history if available) crossed this
+# threshold in either direction.
+discount_zscore_threshold = 2.0
