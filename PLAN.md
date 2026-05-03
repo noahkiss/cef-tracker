@@ -16,8 +16,8 @@ A single Python file, `script/cef_snapshot.py`, structured top-down:
 
 1. **Module docstring** — one short paragraph: what this script does, how to run it, where it writes.
 2. **Imports** — stdlib first (`pathlib`, `datetime`, `sys`), then third-party (`requests`, `pandas`).
-3. **Constants** — `FIELDS` (the human-readable column order for the output), `TICKERS_FILE`, `EXTRACTS_DIR`, `CEFCONNECT_FUNDS_URL` template, request `HEADERS` (set a polite User-Agent).
-4. **`fetch_one_fund(ticker: str) -> dict`** — hit `https://www.cefconnect.com/api/v3/funds/{TICKER}`, raise on HTTP error, return the parsed JSON. Map the JSON's keys to the internal field names listed in `AGENTS.md`. Handle missing fields by returning `None` for them.
+3. **Constants** — `FIELDS` (the human-readable column order for the output), `TICKERS_FILE`, `EXTRACTS_DIR`, URL templates for each CEFConnect endpoint listed in `AGENTS.md` (pricinghistory, performance/annualized, distributionhistory, search/tickers, and the per-fund HTML page), request `HEADERS` (browser-like User-Agent + `Referer`).
+4. **`fetch_one_fund(ticker: str, name_lookup: dict[str, str]) -> dict`** — hit each CEFConnect endpoint, parse what each returns, parse the per-fund HTML page with `beautifulsoup4` for the metadata fields (sponsor, leverage_pct, leverage_cost, unii, expense_ratio), and assemble one flat dict keyed by the internal field names from `AGENTS.md`. Return `None` for any field whose source returned nothing. Raise on HTTP error after one retry. The `name_lookup` is built once from `search/tickers` in `fetch_all_funds` and passed in.
 5. **`fetch_all_funds(tickers: list[str]) -> pandas.DataFrame`** — call `fetch_one_fund` for each ticker, log progress to stdout, collect into a DataFrame in the column order defined by `FIELDS`.
 6. **`write_outputs(df: pandas.DataFrame, extracts_dir: pathlib.Path) -> tuple[Path, Path]`** — create `extracts_dir` if it does not exist, generate a timestamp string `YYYYMMDDHHMM`, write `extract-{ts}.xlsx` (using `openpyxl` engine) and `extract-{ts}.csv`, return the two paths.
 7. **`read_tickers(path: pathlib.Path) -> list[str]`** — read `tickers.txt`, one ticker per line, strip whitespace, ignore blank lines and lines starting with `#`.
@@ -35,7 +35,7 @@ A single Python file, `script/cef_snapshot.py`, structured top-down:
 ### Files to create in `script/`
 
 - `cef_snapshot.py` (the script itself)
-- `requirements.txt` is already seeded; verify it has `requests`, `pandas`, `openpyxl`
+- `requirements.txt` is already seeded; verify it has `requests`, `pandas`, `openpyxl`, `beautifulsoup4`
 - `tickers.txt` is already seeded with BIT, BST, PDI, UTG, RFI
 
 ### Verification
@@ -65,10 +65,11 @@ Now build the multi-module version. The functional behavior is identical to Phas
 
 **`package/cef_tracker/sources/cefconnect.py`**
 
-- `class CEFConnectSource(DataSource)` — concrete implementation hitting `https://www.cefconnect.com/api/v3/funds/{TICKER}`.
-- `__init__` accepts an optional `requests.Session` for testability.
-- `fetch` does the HTTP call, maps the JSON to `FundSnapshot`, returns it.
+- `class CEFConnectSource(DataSource)` — concrete implementation that combines the JSON endpoints and HTML scrape from `AGENTS.md` into a single `FundSnapshot`.
+- `__init__` accepts an optional `requests.Session` for testability. Builds (and caches per-instance) the ticker → name map from `/api/v3/search/tickers` on first `fetch`.
+- `fetch` makes the four JSON calls + one HTML fetch, runs each through a small private parser (`_parse_pricing`, `_parse_performance`, `_parse_distributions`, `_parse_html_metadata`), merges into one `FundSnapshot`, and returns it. Each parser returns `None` for fields it cannot find rather than raising.
 - One retry on transient HTTP error, then raises.
+- Add a `# Teaching:` callout near the parser methods explaining why the source presents a single `fetch` interface even though it talks to five URLs internally — the rest of the app shouldn't care that CEFConnect's data lives in five places.
 
 **`package/cef_tracker/sources/edgar.py`** — *real implementation, not a stub.* This source exists primarily to demonstrate that adding a second source under the `DataSource` ABC is a self-contained operation, but the data it returns is also genuinely useful: 19a-1-style distribution notices appear on EDGAR a week or two before CEFConnect reflects them.
 
@@ -119,7 +120,7 @@ Now build the multi-module version. The functional behavior is identical to Phas
 
 - Empty (or a single `__version__ = "0.1.0"` line).
 
-**`package/pyproject.toml`** — already seeded; verify it specifies Python 3.11+ and lists `requests`, `pandas`, `openpyxl` as dependencies and `pytest` as a dev dependency.
+**`package/pyproject.toml`** — already seeded; verify it specifies Python 3.11+ and lists `requests`, `pandas`, `openpyxl`, `beautifulsoup4` as dependencies and `pytest` as a dev dependency. Update `requirements.txt` to match.
 
 **`package/config.toml`** — already seeded with sample tickers (BIT, BST, PDI, UTG, RFI), the field list, output settings, and threshold defaults.
 
@@ -146,7 +147,7 @@ Tests pin down logic that can break. No tests of trivia. Implement exactly the s
 
 **`package/tests/test_cefconnect.py`**
 
-7. `test_field_extraction_from_recorded_response` — load `tests/fixtures/cefconnect_BIT.json` (a real recorded API response, captured during Phase 4's sample-output run), pass it through `CEFConnectSource`'s JSON-to-`FundSnapshot` mapping, assert the resulting `FundSnapshot` has the expected ticker, name, leverage_pct, and distribution_rate values from the fixture.
+7. `test_field_extraction_from_recorded_responses` — load four JSON fixtures (`cefconnect_BIT_pricing.json`, `cefconnect_BIT_performance.json`, `cefconnect_BIT_distributions.json`, `cefconnect_BIT_search.json`) plus the HTML fixture (`cefconnect_BIT_page.html`), pass them through the corresponding `CEFConnectSource._parse_*` methods (no network), and assert the merged `FundSnapshot` has the expected ticker, name, sponsor, nav, distribution_rate, leverage_pct, and total_return_1y values from the fixtures.
 
 **`package/tests/test_edgar.py`**
 
@@ -156,7 +157,7 @@ Tests pin down logic that can break. No tests of trivia. Implement exactly the s
 
 9. `test_new_edgar_filing_flagged` — current snapshot has a `recent_distribution_filings` entry not present in the prior snapshot; expect one `FlaggedDelta` with `reason="new_distribution_filing"`.
 
-To capture the fixtures: during Phase 4, intercept and save one real CEFConnect JSON response and one real EDGAR JSON response before parsing them.
+To capture the fixtures: during Phase 4, intercept and save the four real CEFConnect JSON responses, the per-fund HTML page, and one real EDGAR JSON response for `BIT` before parsing them. Save under `package/tests/fixtures/`.
 
 ### Verification
 

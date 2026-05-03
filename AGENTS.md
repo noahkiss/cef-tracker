@@ -55,17 +55,38 @@ cef-tracker/
 - **The `extracts/` directory is gitignored.** Real runs do not commit data. The `sample-output/` directory in each folder *is* committed and should contain one representative run captured against the sample tickers.
 - **Comments**: sparse, idiomatic, only where the WHY is non-obvious. The `package/` version may use `# Teaching:` callout comments at the architecture decision points (ABC contracts, dataclass usage, config-as-seam) so a reader can find the conceptual high points by searching for that prefix. Do not over-comment.
 
-## CEFConnect API endpoints
+## CEFConnect data sources
 
-Undocumented JSON, no auth required. These are the endpoints both versions of the tool use:
+CEFConnect's data is served two ways: an undocumented JSON API used by the page's chart widgets, and server-rendered HTML containing the slow-moving fund metadata fields. Neither requires auth. Both versions of the tool combine them inside a single source module so the rest of the code only sees one CEFConnect source.
 
-| Endpoint | Returns |
+**Why two transports:** an earlier `funds/{TICKER}` JSON endpoint covered the whole fund-detail block in one call, but it has been removed from `/api/v3/`. The remaining JSON endpoints cover daily/historical series and performance; the metadata fields (sponsor, leverage, UNII, expense ratio) only exist in the HTML. The pivot is documented in MAKING-OF.md (Round 9).
+
+### JSON endpoints (still live)
+
+| Endpoint | Returns | Fields it covers |
+|---|---|---|
+| `https://www.cefconnect.com/api/v3/pricinghistory/{TICKER}/{range}` (range: `5D`, `1M`, `1Y`, `3Y`, `5Y`, `All`) | Daily rows with NAV, market price, discount per day | `nav`, `market_price`, `discount_pct` (latest row); also feeds discount Z-score |
+| `https://www.cefconnect.com/api/v3/performance/annualized/{TICKER}` | Trailing returns: 3M / 6M / 1Y / 3Y / 5Y / 10Y, with `PriceTR` / `NAVTR` etc. | `total_return_1y/3y/5y/10y` (use `NAVTR`) |
+| `https://www.cefconnect.com/api/v3/distributionhistory/fund/{TICKER}/{MM-DD-YYYY}/{MM-DD-YYYY}` | Per-distribution rows with `TotDiv`, `Income`, `CapitalReturn`, declared/ex/pay dates | `distribution_rate` (12 × latest `TotDiv` ÷ market price), `roc_pct` (sum of `CapitalReturn` ÷ sum of `TotDiv` over the trailing window) |
+| `https://www.cefconnect.com/api/v3/search/tickers` | Full ticker list (~360 funds) with each fund's `Result` (full name) | `name` — fetch once per run and look up by ticker |
+
+All return `{"Data": [...]}` shapes. Send a normal browser-like `User-Agent` and `Referer: https://www.cefconnect.com/fund/{TICKER}` to be polite. Response shapes can change without notice (the API is undocumented). The package version's `tests/fixtures/cefconnect_BIT_*.json` should hold real recorded responses so tests are reproducible offline.
+
+### HTML scrape (for the metadata fields)
+
+`https://www.cefconnect.com/fund/{TICKER}` is server-rendered ASP.NET. The fields that don't have a JSON endpoint live in stable table rows. Parse with `beautifulsoup4`. Fields and locator hints:
+
+| Field | Locator hint |
 |---|---|
-| `https://www.cefconnect.com/api/v3/funds/{TICKER}` | Fund metadata, leverage, distributions, current NAV/price/discount, trailing returns |
-| `https://www.cefconnect.com/api/v3/pricinghistory/{TICKER}/?type=ALL` | Full price/NAV history with computed discount per day |
-| `https://www.cefconnect.com/api/v3/distributionHistory/{TICKER}` | Distribution history with ROC categorization |
+| `sponsor` | `<p><strong>Fund Sponsor</strong><br />…</p>` (in the page header block) |
+| `leverage_pct` | "Effective Leverage" row in the Leverage `<table>` (`<h5 class="subhead">Leverage</h5>` precedes it) |
+| `leverage_cost` | "Leverage Cost" row in same Leverage table |
+| `unii` | UNII reporting block — section heading varies by sponsor; locate by `<strong>` text containing "UNII" |
+| `expense_ratio` | "Total Expense Ratio" row in the "Annual Expense Ratios" `<h5 class="subhead">` table (use the total, not "Other Expenses") |
 
-The primary endpoint is `funds/{TICKER}`. Response shapes can change without notice (the API is undocumented). The package version's `tests/fixtures/cefconnect_BIT.json` should hold a real recorded response so tests are reproducible offline.
+Scrape resilience guidance: locate by surrounding `<strong>` text rather than by full ASP.NET ID, since the IDs are long and brittle. Return `None` if a field cannot be found rather than crashing — the diff engine and outputs handle missing values.
+
+The `cefconnect_BIT_page.html` fixture (recorded once, committed under `tests/fixtures/`) is what the HTML parsing test pins against.
 
 ## SEC EDGAR API (package version only — second data source)
 
@@ -130,7 +151,7 @@ These behaviors are exactly what `tests/test_diff.py` should pin down.
 - f-strings for string interpolation.
 - `dataclass` (frozen where appropriate) for value types.
 - `requests` for HTTP. Set a User-Agent. Handle network errors gracefully (retry once, then fail loudly).
-- Keep dependencies minimal: `requests`, `pandas`, `openpyxl`, `pytest` (package only). Nothing else is justified at this scope.
+- Keep dependencies minimal: `requests`, `pandas`, `openpyxl`, `beautifulsoup4` (HTML parse for the CEFConnect metadata fields), `pytest` (package only). Nothing else is justified at this scope.
 
 ## What not to do
 

@@ -123,19 +123,20 @@ A monthly snapshot is the right cadence for the slow-moving fundamentals; daily 
 
 ### CEFConnect (primary, free)
 
-[CEFConnect](https://www.cefconnect.com) is a free aggregator owned by Nuveen. It normalizes data from SEC filings, the exchange tape, and Morningstar's calculated performance metrics into a clean per-fund page. Its front-end is powered by an undocumented JSON API which both implementations in this repo use.
+[CEFConnect](https://www.cefconnect.com) is a free aggregator owned by Nuveen. It normalizes data from SEC filings, the exchange tape, and Morningstar's calculated performance metrics into a clean per-fund page. The page hydrates from a small undocumented JSON API plus a server-rendered HTML metadata block, and both implementations in this repo combine the two transports.
 
-Useful endpoints:
+Live JSON endpoints used by both versions:
 
 | Endpoint | Returns |
 |---|---|
-| `https://www.cefconnect.com/api/v3/funds/{TICKER}` | Fund metadata: name, sponsor, leverage %, leverage cost, distribution rate, ROC %, UNII, expense ratio, current NAV, current price, current discount |
-| `https://www.cefconnect.com/api/v3/pricinghistory/{TICKER}/?type=ALL` | Full price + NAV history with computed discount per day |
-| `https://www.cefconnect.com/api/v3/distributionHistory/{TICKER}` | Distribution history with ROC categorization |
+| `https://www.cefconnect.com/api/v3/pricinghistory/{TICKER}/{range}` | Daily price, NAV, and computed discount per day (latest row gives current values) |
+| `https://www.cefconnect.com/api/v3/performance/annualized/{TICKER}` | Trailing total returns: 3M / 6M / 1Y / 3Y / 5Y / 10Y, both price-based and NAV-based |
+| `https://www.cefconnect.com/api/v3/distributionhistory/fund/{TICKER}/{from}/{to}` | Per-distribution rows with income vs. capital-return breakdown (used to compute distribution rate and ROC %) |
+| `https://www.cefconnect.com/api/v3/search/tickers` | Full ticker list with each fund's name (one call per run, cached) |
 
-No authentication required. Responses are JSON, generally well-structured. Response shapes can change without notice (the API is undocumented), so committed test fixtures are valuable for catching breakage.
+The slow-moving fund metadata — sponsor, leverage %, leverage cost, UNII, expense ratio — is no longer exposed in the JSON API and lives in the server-rendered `https://www.cefconnect.com/fund/{TICKER}` HTML. Both implementations parse it with `beautifulsoup4`.
 
-Both implementations in this repo lean on the `funds/{TICKER}` endpoint as the primary source.
+No authentication required. Response shapes can change without notice (the API is undocumented) — an earlier `funds/{TICKER}` JSON endpoint that returned everything in one call has already been removed once during this project's lifetime, which is why committed test fixtures are valuable. See [MAKING-OF.md](./MAKING-OF.md), Round 9, for the story.
 
 ### Alternative free sources
 
@@ -242,7 +243,8 @@ The resources below are organized by which version of the project they relate to
 
 ### For the `script/` style
 
-- [Automate the Boring Stuff](https://automatetheboringstuff.com) again — chapters 1–8 cover the full vocabulary used in `script/cef_snapshot.py`.
+- [Automate the Boring Stuff](https://automatetheboringstuff.com) again — chapters 1–8 cover the full vocabulary used in `script/cef_snapshot.py`. Chapter 12 ("Web Scraping") covers `requests` + `beautifulsoup4`, which is exactly the pattern the script uses to pull the metadata fields CEFConnect no longer exposes via JSON (sponsor, leverage, UNII, expense ratio). If a `find()`/`select()` call in the script looks unfamiliar, that chapter is the right reference.
+- [Beautiful Soup documentation](https://www.crummy.com/software/BeautifulSoup/bs4/doc/) — the canonical reference. The "Searching the tree" and "CSS selectors" sections cover ~95% of what most scrapers need.
 - [pandas user guide](https://pandas.pydata.org/docs/user_guide/index.html) — DataFrames, the `read_*` and `to_*` functions, and basic indexing.
 - [requests quickstart](https://requests.readthedocs.io/en/latest/user/quickstart/) — five minutes of reading covers everything you need.
 

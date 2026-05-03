@@ -19,6 +19,7 @@ If you read the rest of the repo and wonder *why* it ended up shaped the way it 
 - [Round 6 — iterating on names and conventions](#round-6--iterating-on-names-and-conventions)
 - [Round 7 — adding a real second source](#round-7--adding-a-real-second-source)
 - [Round 8 — capturing history without overcomplicating it](#round-8--capturing-history-without-overcomplicating-it)
+- [Round 9 — the API moved on us](#round-9--the-api-moved-on-us)
 - [What this process required](#what-this-process-required)
 - [What an LLM brought, and what it did not](#what-an-llm-brought-and-what-it-did-not)
 - [The takeaway](#the-takeaway)
@@ -155,6 +156,32 @@ Why CSV and not parquet or SQLite: the audience can open it in Excel, in pandas,
 Why append-only and not rewrite: it is *much* harder to corrupt an append-only file than one that gets rewritten. Power loss, an interrupted run, or a bug in the writer can damage a rewritten file but is unlikely to damage an append. Same logic that makes log files append-only.
 
 Two artifacts for two questions: per-run dirs for "what was in this run", `history.csv` for "how has this moved over time." Both cheap to maintain. Keep both.
+
+---
+
+## Round 9 — the API moved on us
+
+This round happened during the implementation pass, not the design pass, and it is the most useful one in this file if you are evaluating what agentic coding actually feels like in practice.
+
+The plan named `https://www.cefconnect.com/api/v3/funds/{TICKER}` as the primary data source. That endpoint was real and well-shaped when the design conversation was happening — the entire architecture leaned on it returning a single fat JSON blob with sponsor / leverage / UNII / NAV / distributions / returns all together.
+
+When the implementing agent went to set up the script's first fetch, the endpoint returned a 404. So did every plausible variation (`Funds/`, `FundDetail/`, `funds/{TICKER}/snapshot`, etc.). The undocumented JSON API the entire plan referenced no longer had a fund-detail endpoint at all.
+
+This is exactly the failure mode the README's "Response shapes can change without notice" line warned about, and exactly the failure mode `AGENTS.md`'s "If during implementation you find a genuine reason to deviate from this plan, write it in `STATUS.local.md` and stop for human review" instruction was written to handle. The agent stopped, wrote up the blocker, and surfaced four options (HTML scrape, chart-only fields, switch aggregator, make EDGAR primary) with a recommendation. The human did the next thing that mattered: opened a real browser via Playwright and watched what the live page actually fires.
+
+The network panel told a more interesting story than the 404s did. The page now hydrates from a fan of smaller endpoints — `pricinghistory/{TICKER}/{range}`, `performance/annualized/{TICKER}`, `distributionhistory/fund/{TICKER}/{from}/{to}`, `distributioncharter/fund/{TICKER}/{range}`, `assetallocation/{TICKER}`, `creditquality/{TICKER}`, and a few more. Together they cover NAV, market price, discount, total returns 1Y/3Y/5Y/10Y, and the distribution stream in JSON. What they don't cover is the slow-moving metadata block: sponsor, leverage %, leverage cost, UNII, expense ratio. Those four still live in server-rendered HTML on `/fund/{TICKER}`.
+
+So the redesign was: keep CEFConnect as the primary source, but let it talk to four JSON endpoints plus one HTML page internally, and merge the result inside the source module. From the rest of the application's perspective nothing changes — `CEFConnectSource.fetch(ticker)` still returns one `FundSnapshot`. The cost is one new dependency (`beautifulsoup4`) and a small HTML parser that locates fields by surrounding `<strong>` text rather than by the brittle ASP.NET IDs.
+
+A few things were preserved by handling it this way:
+
+- **The architecture didn't need to bend.** Multi-source merging at the orchestrator level is for cross-aggregator merging (CEFConnect + EDGAR). Within-CEFConnect quirks belong inside `CEFConnectSource`. Keeping that boundary clean meant the only file that knew about the API change was the one that should know.
+- **The teaching point got stronger.** "Undocumented APIs can disappear" was an abstract caution in the original README. It is now a concrete event in the repo's history, with the recovery written into the source code as a worked example. A reader who hits the same kind of failure later will have a precedent.
+- **The plan stayed honest.** Rather than silently coding against the new reality, both `PLAN.md` and `AGENTS.md` were updated to reflect the actual endpoint inventory before any implementation code was written. Future agents reading those files will not be misled by stale references to a dead endpoint.
+
+The friction here was small — maybe twenty minutes of probing and document updates — but the choice point was real. An agent left to its own devices in this situation could plausibly have done one of several wrong things: silently switched to HTML scraping without flagging it, given up and reported "blocked," or invented a fake endpoint based on what the plan said *should* exist and produced code that ran but returned garbage. The "stop and surface" pattern in `AGENTS.md` is what forced the right path. The browser inspection — which the human directed and the agent executed — is what produced the redesign.
+
+Worth saying explicitly: agentic coding works best when this kind of pivot is treated as normal rather than exceptional. Plans drift; APIs move; assumptions break. The right reflex is "stop, surface, redirect" rather than "push through to whatever ships." The thirty-minute interruption to do that costs less than a week of debugging code that was built against a fiction.
 
 ---
 
