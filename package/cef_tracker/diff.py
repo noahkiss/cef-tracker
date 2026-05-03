@@ -88,7 +88,13 @@ def diff_snapshots(
                 snap.distribution_rate, "distribution_cut",
             ))
 
-        if thresholds.flag_new_distribution_filing:
+        # Skip flagging when the prior snapshot has no recorded filings — that's
+        # ambiguous (could mean "no filings then" or "filings weren't captured
+        # in the prior extract"; CSV roundtrips don't preserve this list).
+        if (
+            thresholds.flag_new_distribution_filing
+            and prev.recent_distribution_filings
+        ):
             prev_accessions = {a for _, a, _ in prev.recent_distribution_filings}
             for entry in snap.recent_distribution_filings:
                 if entry[1] not in prev_accessions:

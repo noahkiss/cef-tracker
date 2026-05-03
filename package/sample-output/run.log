@@ -1,0 +1,16 @@
+Run started: 2026-05-03T01:30:22
+  BIT <- cefconnect: ok
+  BIT <- edgar: ok
+  BST <- cefconnect: ok
+  BST <- edgar: ok
+  PDI <- cefconnect: ok
+  PDI <- edgar: ok
+  UTG <- cefconnect: ok
+  UTG <- edgar: ok
+  RFI <- cefconnect: ok
+  RFI <- edgar: ok
+Wrote /home/flight/develop/cef-tracker/package/extracts/202605030130/extract-202605030130.xlsx
+Wrote /home/flight/develop/cef-tracker/package/extracts/202605030130/extract-202605030130.csv
+Appended 5 rows to /home/flight/develop/cef-tracker/package/history.csv
+Flagged deltas vs 202605030127:
+  [leverage_cost_change] BIT.leverage_cost: 1.3 -> 2.0
