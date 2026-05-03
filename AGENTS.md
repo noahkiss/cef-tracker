@@ -65,7 +65,35 @@ Undocumented JSON, no auth required. These are the endpoints both versions of th
 | `https://www.cefconnect.com/api/v3/pricinghistory/{TICKER}/?type=ALL` | Full price/NAV history with computed discount per day |
 | `https://www.cefconnect.com/api/v3/distributionHistory/{TICKER}` | Distribution history with ROC categorization |
 
-The primary endpoint for both implementations is `funds/{TICKER}`. Response shapes can change without notice (the API is undocumented). The package version's `tests/fixtures/cefconnect_BIT.json` should hold a real recorded response so tests are reproducible offline.
+The primary endpoint is `funds/{TICKER}`. Response shapes can change without notice (the API is undocumented). The package version's `tests/fixtures/cefconnect_BIT.json` should hold a real recorded response so tests are reproducible offline.
+
+## SEC EDGAR API (package version only — second data source)
+
+The package version includes a second data source: SEC EDGAR for early detection of distribution notices (filed as 497-series filings with section-19 distribution notice content). This exists primarily as a working demonstration that adding a new source under the `DataSource` ABC is a self-contained operation.
+
+| Endpoint | Returns |
+|---|---|
+| `https://efts.sec.gov/LATEST/search-index?q=%22{TICKER}%22&forms=497&dateRange=custom&startdt=YYYY-MM-DD&enddt=YYYY-MM-DD` | EDGAR full-text search results (JSON) for 497 filings mentioning the ticker |
+| `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={CIK}&type=497&dateb=&owner=include&count=40&output=atom` | Atom feed of 497 filings for a given fund registrant CIK |
+| `https://www.sec.gov/files/company_tickers.json` | Ticker → CIK mapping (operating companies); fund-series tickers may need EDGAR series/class lookup instead |
+
+Notes for the implementer:
+- EDGAR requires a polite User-Agent including a contact email (per their fair-access policy: `User-Agent: cef-tracker (your-email@example.com)`). Make this configurable via `config.toml`.
+- Rate limit: max 10 requests per second per IP. Respect it.
+- For v1, use the EFTS full-text search keyed by ticker symbol — it is the simplest route and avoids the CIK mapping rabbit hole.
+- The `EdgarSource.fetch(ticker)` returns a `FundSnapshot` whose `recent_distribution_filings` field contains a list of `(filing_date, accession_number, form_type)` tuples for filings within the last 60 days. Most fields will be `None` since EDGAR is not the source for NAV / leverage / etc. — that is fine; the diff engine merges sparse snapshots from multiple sources by ticker.
+
+## Multi-source merging
+
+A run may invoke more than one data source. When this happens, snapshots from different sources for the same ticker are merged field-by-field, with the rule: **the first non-None value wins, in source-priority order from `config.toml`**. CEFConnect is configured as primary; EDGAR is configured as secondary and contributes `recent_distribution_filings` (a field CEFConnect does not provide).
+
+## History capture
+
+In addition to the per-run extract files, the package version maintains a top-level append-only `history.csv` (configurable path; gitignored). On every run, after writing the per-run extracts, the orchestrator appends one row per ticker per run to `history.csv` with columns: `as_of_timestamp`, `source`, `ticker`, plus all configured fields in long format (one row per field-value if the long-format option is enabled, or one row per ticker with all fields as columns if wide-format is enabled — wide is the default and simpler).
+
+Why this matters: per-run extract dirs are good for diff and audit ("what was in the run on 2026-05-03"); a single append-only `history.csv` is what you reach for when you want to answer "how has BIT's distribution rate moved over the last twelve months?" without reading and concatenating dozens of extract files. Both serve different purposes — keep both.
+
+Implementation note: append (do not rewrite). If `history.csv` does not exist, create it with a header. If it exists, append rows without the header. Use `pandas.DataFrame.to_csv(path, mode="a", header=not path.exists(), index=False)`.
 
 ## Field set to extract
 
@@ -91,6 +119,7 @@ Field names in the output should be human-readable (e.g. `Discount %`, not `disc
 - Discount Z-score (vs. trailing history) above configured threshold (default 2.0)
 - New ticker present in current run but not prior (handle without crashing)
 - Ticker present in prior run but not current (mark as removed, do not silently drop)
+- New 19a-1-style EDGAR filing detected for a ticker since the prior run (early-warning flag, sourced from `recent_distribution_filings`)
 
 These behaviors are exactly what `tests/test_diff.py` should pin down.
 

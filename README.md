@@ -20,6 +20,7 @@ The same problem, solved twice. Read both. Decide which style fits the next tool
 - [Tooling: pip, uv, and what to use when](#tooling-pip-uv-and-what-to-use-when)
 - [Learning resources](#learning-resources)
 - [Why README.md? Why AGENTS.md?](#why-readmemd-why-agentsmd)
+- [How this project came together](#how-this-project-came-together)
 - [License](#license)
 
 ---
@@ -271,6 +272,12 @@ Fifty years on, every project has one for the same reason: the next person openi
 Same idea as the 1970s convention, extended to a new kind of reader.
 
 ---
+
+## How this project came together
+
+For a narrative of the design conversation that produced this repo — the iterations, the reframings, the trade-offs that got considered and rejected, and reflections on what working with a coding agent actually looks like in practice — see [MAKING-OF.md](./MAKING-OF.md).
+
+It exists because there is a popular but inaccurate model of agentic coding that goes "type a request, walk away." The actual process is iterative and judgment-driven, and that process is hard to see from the outside if all you ever look at is the finished code.
 
 ## License
 

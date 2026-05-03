@@ -33,10 +33,19 @@ include = [
 ]
 
 [sources]
-# Which DataSource implementation to use. Adding a new source means writing
-# a new file under cef_tracker/sources/ that conforms to the DataSource ABC,
-# then naming it here.
-primary = "cefconnect"
+# Which DataSource implementations to use, in priority order. When multiple
+# sources are listed, snapshots are merged field-by-field: the first non-None
+# value wins, in the order listed here. Adding a new source means writing a
+# new file under cef_tracker/sources/ that conforms to the DataSource ABC,
+# then adding it to this list.
+enabled = ["cefconnect", "edgar"]
+
+[sources.edgar]
+# EDGAR requires a User-Agent that identifies the requester (per their
+# fair-access policy). Replace with your own contact email.
+user_agent = "cef-tracker (you@example.com)"
+# How far back to look for distribution notices, in days.
+lookback_days = 60
 
 [output]
 # Each format listed here gets written for every run. Adding a new format
@@ -49,6 +58,12 @@ formats = ["excel", "csv"]
 #   extracts/YYYYMMDDHHMM/extract-YYYYMMDDHHMM.csv
 #   extracts/YYYYMMDDHHMM/run.log
 extracts_dir = "extracts"
+
+# Append-only longitudinal capture. Every run appends one row per ticker.
+# Use this for "how has BIT's distribution rate moved over the last year"
+# style questions; use the per-run extract directories for "what was in
+# the run on YYYY-MM-DD" style questions. Both are cheap; keep both.
+history_path = "history.csv"
 
 [diff]
 # Thresholds for flagged month-over-month changes. The diff module compares
@@ -67,3 +82,6 @@ flag_distribution_cut = true
 # Discount Z-score (vs. trailing 1y history if available) crossed this
 # threshold in either direction.
 discount_zscore_threshold = 2.0
+
+# A new 19a-1-style filing was detected via EDGAR since the prior run.
+flag_new_distribution_filing = true

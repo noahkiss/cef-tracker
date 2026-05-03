@@ -70,6 +70,14 @@ Now build the multi-module version. The functional behavior is identical to Phas
 - `fetch` does the HTTP call, maps the JSON to `FundSnapshot`, returns it.
 - One retry on transient HTTP error, then raises.
 
+**`package/cef_tracker/sources/edgar.py`** — *real implementation, not a stub.* This source exists primarily to demonstrate that adding a second source under the `DataSource` ABC is a self-contained operation, but the data it returns is also genuinely useful: 19a-1-style distribution notices appear on EDGAR a week or two before CEFConnect reflects them.
+
+- `class EdgarSource(DataSource)` — hits the EDGAR EFTS full-text search endpoint listed in `AGENTS.md`. Searches for 497 filings mentioning the ticker symbol within the last 60 days.
+- `__init__(user_agent: str, session: requests.Session | None = None, lookback_days: int = 60)`. The `user_agent` is mandatory (EDGAR requires it; configurable via `config.toml`).
+- `fetch` returns a `FundSnapshot` whose `recent_distribution_filings` field is a list of `(filing_date, accession_number, form_type)` tuples. All other fields are `None`.
+- Respect EDGAR's 10-requests-per-second rate limit. A simple `time.sleep(0.15)` between calls is sufficient at this scale.
+- One retry on transient HTTP error, then raises.
+
 **`package/cef_tracker/output/base.py`**
 
 - `class OutputWriter(abc.ABC)` with one abstract method: `def write(self, snapshots: list[FundSnapshot], extract_dir: Path) -> Path: ...` returning the path written.
@@ -93,7 +101,15 @@ Now build the multi-module version. The functional behavior is identical to Phas
 
 **`package/cef_tracker/main.py`**
 
-- `def run(config_path: Path) -> None` — top-level orchestration. Loads config, instantiates the configured `DataSource`, fetches all snapshots, instantiates configured `OutputWriter`s, writes outputs to a fresh `extracts/YYYYMMDDHHMM/` directory, runs diff against the previous extract directory if one exists, writes `run.log` to the same directory containing per-ticker fetch status and any flagged deltas.
+- `def run(config_path: Path) -> None` — top-level orchestration:
+  1. Load config.
+  2. Instantiate **all configured data sources** in priority order (e.g. `CEFConnectSource` then `EdgarSource`).
+  3. For each ticker, fetch from each source in priority order, then merge the resulting `FundSnapshot`s field-by-field (first non-None wins per `AGENTS.md` "Multi-source merging").
+  4. Instantiate configured `OutputWriter`s.
+  5. Write outputs to a fresh `extracts/YYYYMMDDHHMM/` directory.
+  6. **Append one row per merged snapshot to `history.csv`** at the configured top-level path (per `AGENTS.md` "History capture"). Use `pandas.DataFrame.to_csv(path, mode="a", header=not path.exists(), index=False)`.
+  7. Run diff against the previous extract directory if one exists.
+  8. Write `run.log` containing per-ticker fetch status (per source) and any flagged deltas.
 
 **`package/cef_tracker/__main__.py`**
 
@@ -132,12 +148,20 @@ Tests pin down logic that can break. No tests of trivia. Implement exactly the s
 
 7. `test_field_extraction_from_recorded_response` — load `tests/fixtures/cefconnect_BIT.json` (a real recorded API response, captured during Phase 4's sample-output run), pass it through `CEFConnectSource`'s JSON-to-`FundSnapshot` mapping, assert the resulting `FundSnapshot` has the expected ticker, name, leverage_pct, and distribution_rate values from the fixture.
 
-To capture the fixture: during Phase 4, intercept and save one real JSON response to `tests/fixtures/cefconnect_BIT.json` before parsing it.
+**`package/tests/test_edgar.py`**
+
+8. `test_edgar_filing_parse_from_recorded_response` — load `tests/fixtures/edgar_BIT.json` (a real recorded EFTS search response), pass it through `EdgarSource`'s JSON-to-`FundSnapshot` mapping, assert the resulting `FundSnapshot.recent_distribution_filings` contains the expected number of tuples with the expected `filing_date`, `accession_number`, and `form_type` values.
+
+**`package/tests/test_diff.py`** — add one more diff test:
+
+9. `test_new_edgar_filing_flagged` — current snapshot has a `recent_distribution_filings` entry not present in the prior snapshot; expect one `FlaggedDelta` with `reason="new_distribution_filing"`.
+
+To capture the fixtures: during Phase 4, intercept and save one real CEFConnect JSON response and one real EDGAR JSON response before parsing them.
 
 ### Verification
 
-- `cd package && pytest -v` — all seven tests pass.
-- No network calls during test runs (the fixture is loaded from disk).
+- `cd package && pytest -v` — all nine tests pass.
+- No network calls during test runs (fixtures are loaded from disk).
 
 ---
 
@@ -148,8 +172,8 @@ Produce committed sample outputs for both versions so a reader can see the data 
 ### Steps
 
 1. Run `script/cef_snapshot.py` against the seeded `script/tickers.txt`. Copy the produced `extract-*.xlsx` and `extract-*.csv` from `script/extracts/` into `script/sample-output/`.
-2. Run `python -m cef_tracker` from `package/`. Copy the produced `extract-*.xlsx`, `extract-*.csv`, and `run.log` from the timestamped subdirectory in `package/extracts/` into `package/sample-output/`.
-3. Verify the sample outputs are real, populated, and readable.
+2. Run `python -m cef_tracker` from `package/` **at least twice** (with a 60+ second gap so timestamps differ — this is what enables the diff and gives the second run something to compare against). Copy the most recent run's `extract-*.xlsx`, `extract-*.csv`, and `run.log` from the timestamped subdirectory in `package/extracts/` into `package/sample-output/`. Also copy a representative `history.csv` snippet (first ~20 rows) into `package/sample-output/history-sample.csv` so a reader can see what longitudinal capture looks like.
+3. Verify the sample outputs are real, populated, and readable. The package version's `run.log` should show fetches from both CEFConnect and EDGAR per ticker.
 4. Commit them.
 
 The `extracts/` directories themselves are gitignored — only `sample-output/` is committed.
@@ -174,10 +198,11 @@ The top-level README is already complete. Now write each subfolder's README, foc
 - One-paragraph what-this-is.
 - Setup and run (`pip install -r requirements.txt && python -m cef_tracker`).
 - "Project layout" — the file tree from `cef_tracker/` with one line per file.
-- "Three architectural decisions" — three short subsections covering:
+- "Four architectural decisions" — four short subsections covering:
   1. **`config.toml` as the seam** — anything that changes often does not belong in code.
-  2. **`DataSource` ABC** — the contract is "give me a Ticker, return a FundSnapshot." Adding Morningstar later means writing a new file and changing one config line.
+  2. **`DataSource` ABC** — the contract is "give me a Ticker, return a FundSnapshot." Adding Morningstar later means writing a new file and changing one config line. Demonstrate by pointing at the *real* second source already in the repo: `sources/edgar.py` (CEFConnect for the bulk of fields, EDGAR for early-warning distribution notices). Explain the multi-source merge rule (first non-None wins, in source-priority order).
   3. **Dated extract directories + `diff.py`** — per-run isolation beats appending; finding the previous run by date sort beats tracking state explicitly.
+  4. **`history.csv` for longitudinal capture** — extract dirs answer "what was in this run"; `history.csv` answers "how has this field moved over time." Two artifacts for two questions, both cheap to maintain. Append-only, never rewritten.
 - "How to add a new data source" — step-by-step pointing at `sources/base.py`.
 - "How to add a new output writer" — same.
 - "What this version does not do yet" — out-of-scope list (no scheduling, no GUI, no real-time, no alerting).

@@ -48,5 +48,9 @@ extracts/
 script/extracts/
 package/extracts/
 
+# Project: append-only longitudinal capture, never committed
+history.csv
+package/history.csv
+
 # Project: status file is local-only, never committed
 STATUS.local.md
